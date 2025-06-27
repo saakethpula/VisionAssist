@@ -1,7 +1,4 @@
 import React, { useRef, useState } from "react";
-
-// Add these types at the top of the file for TypeScript compatibility
-// @ts-ignore
 interface Window {
     webkitSpeechRecognition: any;
     SpeechRecognition: any;
@@ -62,7 +59,6 @@ const Vision: React.FC = () => {
         }
     };
 
-    // Microphone setup
     const startListening = () => {
         if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
             setError("Speech recognition not supported in this browser.");
@@ -95,7 +91,6 @@ const Vision: React.FC = () => {
         setListening(false);
     };
 
-    // Helper to get full frame as base64
     const getFullFrameBase64 = (): string | null => {
         if (videoRef.current && canvasRef.current) {
             const width = videoRef.current.videoWidth;
@@ -114,19 +109,16 @@ const Vision: React.FC = () => {
 
     const analyzeCenter = async (): Promise<string> => {
         if (videoRef.current && canvasRef.current) {
-            // Wait until video is ready
             if (
                 videoRef.current.readyState < 2 ||
                 videoRef.current.videoWidth === 0 ||
                 videoRef.current.videoHeight === 0
             ) {
-                // Not ready, try again in 300ms
                 await new Promise(res => setTimeout(res, 300));
                 return analyzeCenter();
             }
             const width = videoRef.current.videoWidth;
             const height = videoRef.current.videoHeight;
-            // --- Capture full frame as base64 ---
             canvasRef.current.width = width;
             canvasRef.current.height = height;
             const ctx = canvasRef.current.getContext("2d");
@@ -136,16 +128,13 @@ const Vision: React.FC = () => {
                 const fullFrameDataUrl = canvasRef.current.toDataURL("image/png");
                 fullFrameBase64 = fullFrameDataUrl.replace(/^data:image\/png;base64,/, "");
             }
-            // --- Updated prompt for wider net and more specific matching ---
             let prompt = `USER DESCRIPTION: "${transcript}"
 
 You are a vision assistant. Your job is to help the user frame the object or person they described above in the camera view so that a photo can be taken. Look for anything that could plausibly match the user's description, even if it is not a perfect match. Err on the side of inclusion: if there is any object that could reasonably be what the user described, use that. Do NOT default to people unless the user described a person. Do NOT try to identify who or what it is beyond the user's description. Do NOT comment on identity. Only give spatial directions for framing the described object or person in the view.
 
 Instructions:
-- If the described object or person (or the best plausible match) is fully within the central fifth (the middle 20% horizontally and vertically) of the camera frame, reply ONLY with 'ready'.
+- If the described object or person (or the best plausible match) is within the camera frame, reply ONLY with the directions to center the object, and if the object is already centered reply only with "ready".
 - If it is not fully within the central fifth, reply ONLY with precise directions (left, right, up, down, closer, farther) to move the described object or person into the central fifth.
-- If the described object or person is not visible, reply ONLY with 'not visible'.
-- Do not guess. Do not comment on identity. Do not add extra text.
 `;
             prompt += "\nBe practical. Cast a wide net. Reply with only the directions or say 'ready' if the described object or person (or best plausible match) is fully within the middle fifth of the frame.";
             const response = await fetch("http://localhost:5174/api/openai-proxy", {
@@ -162,7 +151,6 @@ Instructions:
             const text = result.text?.toLowerCase() || "";
             setDetection(text);
             setDebugDescription(result.debugDescription || null);
-            // --- New logic: If model sees the object but says 'not visible', show a warning ---
             if (
                 text === 'not visible' &&
                 result.debugDescription &&
@@ -184,7 +172,6 @@ Instructions:
             if (result.includes("ready")) {
                 clearInterval(interval);
                 setAutoDetecting(false);
-                // Take photo
                 if (videoRef.current && canvasRef.current) {
                     const width = videoRef.current.videoWidth;
                     const height = videoRef.current.videoHeight;
@@ -199,7 +186,7 @@ Instructions:
                     }
                 }
             }
-        }, 3000); // every 3 seconds
+        }, 3000);
         setAutoDetectInterval(interval);
     };
 
@@ -212,19 +199,16 @@ Instructions:
         setDetection("");
     };
 
-    // Manual detectCenter function for button
     const detectCenter = async () => {
         setDetection("Detecting...");
         await analyzeCenter();
     };
 
-    // --- Voice Assistant State ---
     const [voiceActive, setVoiceActive] = useState(false);
     const [waitingForDescription, setWaitingForDescription] = useState(false);
     const WAKE_WORD = "vision assist";
     let wakeRecognition: any = null;
 
-    // --- Speech Synthesis Helper ---
     const speak = (text: string, onEnd?: () => void) => {
         const synth = window.speechSynthesis;
         if (synth.speaking) synth.cancel();
@@ -234,7 +218,6 @@ Instructions:
         synth.speak(utter);
     };
 
-    // --- Wake Word Listener ---
     const startWakeWordListening = () => {
         if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
             setError("Speech recognition not supported in this browser.");
@@ -264,9 +247,7 @@ Instructions:
         speak("Say 'Vision Assist' to begin.");
     };
 
-    // --- Description Listener ---
     const startDescriptionListening = () => {
-        // Wait for voice prompt to finish before starting mic
         speak("How can I help? Please describe what you want to find.", () => {
             const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
             recognition = new SpeechRecognition();
@@ -292,7 +273,6 @@ Instructions:
         });
     };
 
-    // --- Voice-Driven Auto Detect ---
     const startAutoDetectVoice = async () => {
         setAutoDetecting(true);
         setDetection("Auto-detecting... Move to the center.");
@@ -323,33 +303,28 @@ Instructions:
                     }
                 }
             } else {
-                // Speak directions every 5 seconds
+
                 speak(result);
             }
-        }, 5000); // every 5 seconds
+        }, 5000);
         setAutoDetectInterval(interval as any);
     };
 
-    // --- On mount, start wake word listening ---
     React.useEffect(() => {
         if (!voiceActive && !waitingForDescription && !autoDetecting) {
             startWakeWordListening();
         }
-        // Cleanup on unmount
         return () => {
             if (wakeRecognition) wakeRecognition.stop();
             if (recognition) recognition.stop();
             if (autoDetectInterval) clearInterval(autoDetectInterval);
         };
-        // eslint-disable-next-line
     }, []);
 
-    // Auto-start camera on mount
     React.useEffect(() => {
         startCamera();
     }, []);
 
-    // Webcam preview size
     const previewWidth = 480;
     const previewHeight = 360;
 
@@ -370,14 +345,12 @@ Instructions:
                     </div>
                 )}
             </div>
-            {/* Wake word prompt UI */}
             {(!voiceActive && !waitingForDescription && !autoDetecting) && (
                 <div style={{ margin: '24px auto', color: '#1976d2', fontSize: 28, fontWeight: 700, letterSpacing: 1, maxWidth: 600 }}>
                     Say 'Vision Assist' to begin
                 </div>
             )}
             <div>
-                {/* Hide all manual controls in voice mode */}
                 {!voiceActive && !waitingForDescription && !autoDetecting && !streaming && (
                     <button onClick={startCamera}>Start Camera</button>
                 )}
