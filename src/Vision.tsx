@@ -38,7 +38,8 @@ const Vision: React.FC = () => {
         const dataUrl = captureFrame();
         if (!dataUrl) return;
         try {
-            const response = await fetch("http://localhost:5180/api/gemini-vision", {
+            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5180';
+            const response = await fetch(`${apiUrl}/api/gemini-vision`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ imageBase64: dataUrl.split(',')[1] })
