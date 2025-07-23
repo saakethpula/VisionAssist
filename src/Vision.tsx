@@ -1,25 +1,83 @@
-import React, { useRef, useState } from "react";
-interface Window {
-    webkitSpeechRecognition: any;
-    SpeechRecognition: any;
-}
+import React, { useRef, useState, useEffect } from "react";
 
 const Vision: React.FC = () => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [photo, setPhoto] = useState<string | null>(null);
     const [streaming, setStreaming] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [detection, setDetection] = useState<string | null>(null);
-    const [listening, setListening] = useState(false);
-    const [transcript, setTranscript] = useState("");
-    const [autoDetecting, setAutoDetecting] = useState(false);
-    const [autoDetectInterval, setAutoDetectInterval] = useState<number | null>(null);
-    const [debugDescription, setDebugDescription] = useState<string | null>(null);
-    let recognition: any = null;
+    const [geminiResponse, setGeminiResponse] = useState<string>("");
+    const [detectedObjects, setDetectedObjects] = useState<Array<{ name: string; x: number; y: number; direction: string }>>([]);
+    const [targetObject, setTargetObject] = useState<string>("");
+    const [micTranscript, setMicTranscript] = useState<string>("");
+
+
+    const speak = (text: string, onEnd?: () => void) => {
+        const synth = window.speechSynthesis;
+        if (synth.speaking) synth.cancel();
+        const utter = new window.SpeechSynthesisUtterance(text);
+        if (onEnd) utter.onend = onEnd;
+        synth.speak(utter);
+    };
+
+    const captureFrame = (): string | null => {
+        if (videoRef.current && canvasRef.current) {
+            const video = videoRef.current;
+            const canvas = canvasRef.current;
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                return canvas.toDataURL("image/jpeg");
+            }
+        }
+        return null;
+    };
+
+    const analyzeFrameWithGemini = async () => {
+        const dataUrl = captureFrame();
+        if (!dataUrl) return;
+        try {
+            const response = await fetch("http://localhost:5180/api/gemini-vision", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ imageBase64: dataUrl.split(',')[1] })
+            });
+            const data = await response.json();
+            if (data.text) {
+                setGeminiResponse(data.text);
+                const objects = parseObjectsFromGemini(data.text);
+                setDetectedObjects(objects);
+                if (targetObject) {
+                    analyzeGeminiForObject(data.text);
+                }
+            } else {
+                setDetectedObjects([]);
+            }
+        } catch (error) {
+            setDetectedObjects([]);
+        }
+    };
+    function parseObjectsFromGemini(response: string): Array<{ name: string; x: number; y: number; direction: string }> {
+
+        const lines = response.split('\n');
+        const objects: Array<{ name: string; x: number; y: number; direction: string }> = [];
+        const regex = /([\w\s]+)\s*\(x:\s*(-?\d+),\s*y:\s*(-?\d+)\)\s*-\s*(.*)/i;
+        for (const line of lines) {
+            const match = line.match(regex);
+            if (match) {
+                objects.push({
+                    name: match[1].trim(),
+                    x: parseInt(match[2], 10),
+                    y: parseInt(match[3], 10),
+                    direction: match[4].trim()
+                });
+            }
+        }
+        return objects;
+    }
 
     const startCamera = async () => {
-        setError(null);
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -28,13 +86,64 @@ const Vision: React.FC = () => {
                     setStreaming(true);
                 }
             } catch (err) {
-                setError("Could not access the camera.");
+                // Camera error ignored
             }
         } else {
-            setError("Camera not supported in this browser.");
+            // Camera not supported error ignored
         }
     };
 
+    // Always-on microphone for object description (no error handling)
+    useEffect(() => {
+        if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
+            return;
+        }
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+        recognition.onresult = (event: any) => {
+            let interimTranscript = '';
+            let finalTranscript = '';
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                if (event.results[i].isFinal) {
+                    finalTranscript += event.results[i][0].transcript;
+                } else {
+                    interimTranscript += event.results[i][0].transcript;
+                }
+            }
+            setMicTranscript(interimTranscript + finalTranscript);
+            if (finalTranscript) {
+                setTargetObject(finalTranscript.trim());
+                speak(`Looking for: ${finalTranscript.trim()}`);
+            }
+        };
+        recognition.onend = () => {
+            setTimeout(() => {
+                try { recognition.start(); } catch (e) { }
+            }, 1000);
+        };
+        recognition.start();
+        return () => {
+            recognition.stop();
+        };
+    }, []);
+
+    // Analyze Gemini response for object and give directions
+    const analyzeGeminiForObject = (responseText: string) => {
+        if (!targetObject) return;
+        const lowerResponse = responseText.toLowerCase();
+        const lowerTarget = targetObject.toLowerCase();
+        if (lowerResponse.includes(lowerTarget)) {
+            speak(`The ${targetObject} is in the frame. Please center it and hold still for a photo.`);
+            setTimeout(() => takePhoto(), 2000);
+        } else {
+            speak(`Move the camera, the ${targetObject} is not in the frame.`);
+        }
+    };
+
+    // Take a photo and show it in the UI
     const takePhoto = () => {
         if (videoRef.current && canvasRef.current) {
             const width = videoRef.current.videoWidth;
@@ -46,284 +155,24 @@ const Vision: React.FC = () => {
                 ctx.drawImage(videoRef.current, 0, 0, width, height);
                 const dataUrl = canvasRef.current.toDataURL("image/png");
                 setPhoto(dataUrl);
+                speak("Photo taken!");
             }
         }
     };
 
-    const stopCamera = () => {
-        if (videoRef.current && videoRef.current.srcObject) {
-            const stream = videoRef.current.srcObject as MediaStream;
-            stream.getTracks().forEach(track => track.stop());
-            videoRef.current.srcObject = null;
-            setStreaming(false);
-        }
-    };
-
-    const startListening = () => {
-        if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
-            setError("Speech recognition not supported in this browser.");
-            return;
-        }
-        setError(null);
-        setTranscript("");
-        setListening(true);
-        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        recognition = new SpeechRecognition();
-        recognition.continuous = false;
-        recognition.interimResults = false;
-        recognition.lang = 'en-US';
-        recognition.onresult = (event: any) => {
-            setTranscript(event.results[0][0].transcript);
-            setListening(false);
-        };
-        recognition.onerror = () => {
-            setError("Microphone error or permission denied.");
-            setListening(false);
-        };
-        recognition.onend = () => setListening(false);
-        recognition.start();
-    };
-
-    const stopListening = () => {
-        if (recognition) {
-            recognition.stop();
-        }
-        setListening(false);
-    };
-
-    const getFullFrameBase64 = (): string | null => {
-        if (videoRef.current && canvasRef.current) {
-            const width = videoRef.current.videoWidth;
-            const height = videoRef.current.videoHeight;
-            canvasRef.current.width = width;
-            canvasRef.current.height = height;
-            const ctx = canvasRef.current.getContext("2d");
-            if (ctx) {
-                ctx.drawImage(videoRef.current, 0, 0, width, height);
-                const dataUrl = canvasRef.current.toDataURL("image/png");
-                return dataUrl.replace(/^data:image\/png;base64,/, "");
-            }
-        }
-        return null;
-    };
-
-    const analyzeCenter = async (): Promise<string> => {
-        if (videoRef.current && canvasRef.current) {
-            if (
-                videoRef.current.readyState < 2 ||
-                videoRef.current.videoWidth === 0 ||
-                videoRef.current.videoHeight === 0
-            ) {
-                await new Promise(res => setTimeout(res, 300));
-                return analyzeCenter();
-            }
-            const width = videoRef.current.videoWidth;
-            const height = videoRef.current.videoHeight;
-            canvasRef.current.width = width;
-            canvasRef.current.height = height;
-            const ctx = canvasRef.current.getContext("2d");
-            let fullFrameBase64 = "";
-            if (ctx) {
-                ctx.drawImage(videoRef.current, 0, 0, width, height);
-                const fullFrameDataUrl = canvasRef.current.toDataURL("image/png");
-                fullFrameBase64 = fullFrameDataUrl.replace(/^data:image\/png;base64,/, "");
-            }
-            let prompt = `USER DESCRIPTION: "${transcript}"
-
-You are a vision assistant. Your job is to help the user frame the object or person they described above in the camera view so that a photo can be taken. Look for anything that could plausibly match the user's description, even if it is not a perfect match. Err on the side of inclusion: if there is any object that could reasonably be what the user described, use that. Do NOT default to people unless the user described a person. Do NOT try to identify who or what it is beyond the user's description. Do NOT comment on identity. Only give spatial directions for framing the described object or person in the view.
-
-Instructions:
-- If the described object or person (or the best plausible match) is within the camera frame, reply ONLY with the directions to center the object, and if the object is already centered reply only with "ready".
-- If it is not fully within the central fifth, reply ONLY with precise directions (left, right, up, down, closer, farther) to move the described object or person into the central fifth.
-`;
-            prompt += "\nBe practical. Cast a wide net. Reply with only the directions or say 'ready' if the described object or person (or best plausible match) is fully within the middle fifth of the frame.";
-            const response = await fetch("http://localhost:5174/api/openai-proxy", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    prompt,
-                    imageBase64: fullFrameBase64
-                })
-            });
-            const result = await response.json();
-            const text = result.text?.toLowerCase() || "";
-            setDetection(text);
-            setDebugDescription(result.debugDescription || null);
-            if (
-                text === 'not visible' &&
-                result.debugDescription &&
-                transcript &&
-                result.debugDescription.toLowerCase().includes(transcript.toLowerCase())
-            ) {
-                setDetection("Object detected, but not centered. Move it to the center of the frame.");
-            }
-            return text;
-        }
-        return "";
-    };
-
-    const startAutoDetect = async () => {
-        setAutoDetecting(true);
-        setDetection("Auto-detecting... Move to the center.");
-        const interval = setInterval(async () => {
-            const result = await analyzeCenter();
-            if (result.includes("ready")) {
-                clearInterval(interval);
-                setAutoDetecting(false);
-                if (videoRef.current && canvasRef.current) {
-                    const width = videoRef.current.videoWidth;
-                    const height = videoRef.current.videoHeight;
-                    canvasRef.current.width = width;
-                    canvasRef.current.height = height;
-                    const ctx = canvasRef.current.getContext("2d");
-                    if (ctx) {
-                        ctx.drawImage(videoRef.current, 0, 0, width, height);
-                        const dataUrl = canvasRef.current.toDataURL("image/png");
-                        setPhoto(dataUrl);
-                        setDetection("Photo taken! The object is well framed.");
-                    }
-                }
-            }
-        }, 3000);
-        setAutoDetectInterval(interval);
-    };
-
-    const stopAutoDetect = () => {
-        if (autoDetectInterval) {
-            clearInterval(autoDetectInterval);
-            setAutoDetectInterval(null);
-        }
-        setAutoDetecting(false);
-        setDetection("");
-    };
-
-    const detectCenter = async () => {
-        setDetection("Detecting...");
-        await analyzeCenter();
-    };
-
-    const [voiceActive, setVoiceActive] = useState(false);
-    const [waitingForDescription, setWaitingForDescription] = useState(false);
-    const WAKE_WORD = "vision assist";
-    let wakeRecognition: any = null;
-
-    const speak = (text: string, onEnd?: () => void) => {
-        const synth = window.speechSynthesis;
-        if (synth.speaking) synth.cancel();
-        const utter = new window.SpeechSynthesisUtterance(text);
-        utter.rate = 1;
-        if (onEnd) utter.onend = onEnd;
-        synth.speak(utter);
-    };
-
-    const startWakeWordListening = () => {
-        if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
-            setError("Speech recognition not supported in this browser.");
-            return;
-        }
-        setError(null);
-        setVoiceActive(false);
-        setWaitingForDescription(false);
-        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        wakeRecognition = new SpeechRecognition();
-        wakeRecognition.continuous = true;
-        wakeRecognition.interimResults = false;
-        wakeRecognition.lang = 'en-US';
-        wakeRecognition.onresult = (event: any) => {
-            const transcript = event.results[event.results.length - 1][0].transcript.trim().toLowerCase();
-            if (transcript.includes(WAKE_WORD)) {
-                setVoiceActive(true);
-                setWaitingForDescription(true);
-                wakeRecognition.stop();
-                startDescriptionListening();
-            }
-        };
-        wakeRecognition.onerror = () => {
-            setError("Wake word recognition error.");
-        };
-        wakeRecognition.start();
-        speak("Say 'Vision Assist' to begin.");
-    };
-
-    const startDescriptionListening = () => {
-        speak("How can I help? Please describe what you want to find.", () => {
-            const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-            recognition = new SpeechRecognition();
-            recognition.continuous = false;
-            recognition.interimResults = false;
-            recognition.lang = 'en-US';
-            recognition.onresult = (event: any) => {
-                const desc = event.results[0][0].transcript;
-                setTranscript(desc);
-                setWaitingForDescription(false);
-                speak("Starting detection for: " + desc);
-                setTimeout(() => startAutoDetectVoice(), 1000);
-            };
-            recognition.onerror = () => {
-                setError("Microphone error or permission denied.");
-                setWaitingForDescription(false);
-                setVoiceActive(false);
-                speak("Sorry, I didn't catch that. Please say 'Vision Assist' to try again.");
-                setTimeout(() => startWakeWordListening(), 2000);
-            };
-            recognition.onend = () => { };
-            recognition.start();
-        });
-    };
-
-    const startAutoDetectVoice = async () => {
-        setAutoDetecting(true);
-        setDetection("Auto-detecting... Move to the center.");
-        speak("Move the object to the center of the frame.");
-        const interval = setInterval(async () => {
-            const result = await analyzeCenter();
-            if (result.includes("ready")) {
-                clearInterval(interval);
-                setAutoDetecting(false);
-                if (videoRef.current && canvasRef.current) {
-                    const width = videoRef.current.videoWidth;
-                    const height = videoRef.current.videoHeight;
-                    canvasRef.current.width = width;
-                    canvasRef.current.height = height;
-                    const ctx = canvasRef.current.getContext("2d");
-                    if (ctx) {
-                        ctx.drawImage(videoRef.current, 0, 0, width, height);
-                        const dataUrl = canvasRef.current.toDataURL("image/png");
-                        setPhoto(dataUrl);
-                        setDetection("Photo taken! The object is well framed.");
-                        speak("Photo taken! The object is well framed.");
-                        setTimeout(() => {
-                            setVoiceActive(false);
-                            setTranscript("");
-                            speak("Say 'Vision Assist' to start again.");
-                            startWakeWordListening();
-                        }, 3000);
-                    }
-                }
-            } else {
-
-                speak(result);
-            }
-        }, 5000);
-        setAutoDetectInterval(interval as any);
-    };
-
-    React.useEffect(() => {
-        if (!voiceActive && !waitingForDescription && !autoDetecting) {
-            startWakeWordListening();
-        }
-        return () => {
-            if (wakeRecognition) wakeRecognition.stop();
-            if (recognition) recognition.stop();
-            if (autoDetectInterval) clearInterval(autoDetectInterval);
-        };
-    }, []);
-
-    React.useEffect(() => {
+    useEffect(() => {
         startCamera();
     }, []);
+
+    // Start analyzing frames as soon as the camera is streaming
+    useEffect(() => {
+        if (streaming) {
+            const interval = setInterval(() => {
+                analyzeFrameWithGemini();
+            }, 5000); // Analyze every 5 seconds
+            return () => clearInterval(interval);
+        }
+    }, [streaming]);
 
     const previewWidth = 480;
     const previewHeight = 360;
@@ -331,7 +180,9 @@ Instructions:
     return (
         <div style={{ textAlign: "center" }}>
             <h2>Webcam Preview</h2>
-            {error && <div style={{ color: 'red', marginBottom: 10 }}>{error}</div>}
+            <div style={{ color: '#1976d2', fontSize: 22, margin: 16 }}>
+                <span style={{ color: '#888', fontSize: 16 }}>(Transcript: {micTranscript})</span>
+            </div>
             <div style={{ marginBottom: 10, position: 'relative', width: previewWidth, height: previewHeight, margin: '0 auto' }}>
                 <video
                     ref={videoRef}
@@ -345,31 +196,6 @@ Instructions:
                     </div>
                 )}
             </div>
-            {(!voiceActive && !waitingForDescription && !autoDetecting) && (
-                <div style={{ margin: '24px auto', color: '#1976d2', fontSize: 28, fontWeight: 700, letterSpacing: 1, maxWidth: 600 }}>
-                    Say 'Vision Assist' to begin
-                </div>
-            )}
-            <div>
-                {!voiceActive && !waitingForDescription && !autoDetecting && !streaming && (
-                    <button onClick={startCamera}>Start Camera</button>
-                )}
-            </div>
-            {waitingForDescription && (
-                <div style={{ marginTop: 10, color: 'blue' }}>
-                    Listening for your description...
-                </div>
-            )}
-            {transcript && (
-                <div style={{ marginTop: 10, color: '#333' }}>
-                    <b>Transcript:</b> {transcript}
-                </div>
-            )}
-            {(!transcript && streaming) && (
-                <div style={{ marginTop: 10, color: 'red' }}>
-                    Please use the microphone to describe what you want to find before detecting.
-                </div>
-            )}
             <canvas ref={canvasRef} style={{ display: "none" }} />
             {photo && (
                 <div style={{ marginTop: 20 }}>
@@ -377,16 +203,29 @@ Instructions:
                     <img src={photo} alt="Captured" style={{ width: 320, height: 240, border: "1px solid #ccc" }} />
                 </div>
             )}
-            {detection && (
-                <div style={{ marginTop: 20 }}>
-                    <h3>Center Detection:</h3>
-                    <div>{detection}</div>
+            {/* Gemini Vision raw response below camera */}
+            {geminiResponse && (
+                <div style={{ marginTop: 24, marginBottom: 8, maxWidth: 600, marginLeft: 'auto', marginRight: 'auto', background: '#f0f4fa', borderRadius: 10, boxShadow: '0 0 6px #1976d2', padding: 12, color: '#222', fontSize: 16 }}>
+                    <strong>Gemini Vision Response:</strong>
+                    <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, background: 'none', color: '#1976d2' }}>{geminiResponse}</pre>
                 </div>
             )}
-            {debugDescription && (
-                <div style={{ marginTop: 20 }}>
-                    <h3>What the model sees:</h3>
-                    <div>{debugDescription}</div>
+            {/* Gemini detected objects list at the bottom */}
+            {detectedObjects.length > 0 && (
+                <div style={{ marginTop: 24, marginBottom: 16, textAlign: 'left', maxWidth: 600, marginLeft: 'auto', marginRight: 'auto', background: '#f7f7fa', borderRadius: 12, boxShadow: '0 0 8px #1976d2', padding: 16 }}>
+                    <h3 style={{ color: '#1976d2' }}>Objects Detected by Gemini:</h3>
+                    <ul style={{ listStyle: 'none', padding: 0 }}>
+                        {detectedObjects.map((obj, idx) => (
+                            <li key={idx} style={{ marginBottom: 12, fontSize: 18, color: '#333', borderBottom: '1px solid #e0e0e0', paddingBottom: 8 }}>
+                                <strong>{obj.name}</strong> &nbsp;
+                                <span style={{ color: '#1976d2' }}>
+                                    (x: {obj.x}, y: {obj.y})
+                                </span>
+                                <br />
+                                <span style={{ color: '#555' }}>Direction: {obj.direction}</span>
+                            </li>
+                        ))}
+                    </ul>
                 </div>
             )}
         </div>
