@@ -137,7 +137,7 @@ Instructions:
 - If it is not in the center, reply ONLY with precise directions (left, right, up, down, closer, farther) to move the described object or person into the center.
 - If the described object or person is not visible, reply ONLY with 'not visible'.
 - Do not guess. Do not comment on identity. Do not add extra text.
-- The requested object must be in the CENTER of the frame, making it the MAIN FOCUS of the photo.
+- The requested object must be in the CENTER of the frame, BOTH HORIZONTALLY AND VERTICALLY, making it the MAIN FOCUS of the photo.
 
 Be practical. Cast a wide net. Reply with only the directions or say 'ready' if the described object or person (or best plausible match) is fully within the middle fifth of the frame.`;
             const response = await fetch("https://gemini-server-for-vision.onrender.com/api/gemini-vision", {
