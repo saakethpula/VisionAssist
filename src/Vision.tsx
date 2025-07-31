@@ -140,7 +140,7 @@ Instructions:
 - The requested object must be in the CENTER of the frame, making it the MAIN FOCUS of the photo.
 
 Be practical. Cast a wide net. Reply with only the directions or say 'ready' if the described object or person (or best plausible match) is fully within the middle fifth of the frame.`;
-            const response = await fetch("http://localhost:5180/api/gemini-vision", {
+            const response = await fetch("https://gemini-server-for-vision.onrender.com/api/gemini-vision", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
