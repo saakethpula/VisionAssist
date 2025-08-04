@@ -16,6 +16,7 @@ const Vision: React.FC = () => {
     const [transcript, setTranscript] = useState("");
     const [autoDetecting, setAutoDetecting] = useState(false);
     const [autoDetectInterval, setAutoDetectInterval] = useState<number | null>(null);
+    const [lastResponses, setLastResponses] = useState<string[]>([]);
     let recognition: any = null;
 
     const startCamera = async () => {
@@ -130,16 +131,54 @@ const Vision: React.FC = () => {
             }
             let prompt = `USER DESCRIPTION: "${transcript}"
 
-You are a vision assistant. Your job is to help the user frame the object or person they described above in the camera view so that a photo can be taken. Look for anything that could plausibly match the user's description, even if it is not a perfect match. Err on the side of inclusion: if there is any object that could reasonably be what the user described, use that. Do NOT default to people unless the user described a person. Do NOT try to identify who or what it is beyond the user's description. Do NOT comment on identity. Only give spatial directions for framing the described object or person in the view.
+You are a vision assistant for photo framing. Analyze the image and find the object that matches the user's description.
 
-Instructions:
-- If the described object or person (or the best plausible match) is fully within the center of the camera frame, reply ONLY with 'ready'.
-- If it is not in the center, reply ONLY with precise directions (left, right, up, down, closer, farther) to move the described object or person into the center.
-- If the described object or person is not visible, reply ONLY with 'not visible'.
-- Do not guess. Do not comment on identity. Do not add extra text.
-- The requested object must be in the CENTER of the frame, BOTH HORIZONTALLY AND VERTICALLY, making it the MAIN FOCUS of the photo.
+SPATIAL UNDERSTANDING:
+- The image shows what the camera sees
+- LEFT side of image = object needs to "move right" to get to center
+- RIGHT side of image = object needs to "move left" to get to center  
+- TOP of image = object needs to "move down" to get to center
+- BOTTOM of image = object needs to "move up" to get to center
 
-Be practical. Cast a wide net. Reply with only the directions or say 'ready' if the described object or person (or best plausible match) is fully within the middle fifth of the frame.`;
+CENTER DEFINITION:
+- TRUE CENTER = middle 40% of both width and height of the frame
+- Divide the frame into a 3x3 grid - center is the middle square
+- Object should be in this middle area, not just anywhere on the frame
+
+TASK: Find the described object and check if it's in the TRUE CENTER of the frame.
+
+RESPONSE FORMAT:
+You must respond in this exact format:
+COMMAND: [command]
+BBOX: [x1,y1,x2,y2]
+
+Where:
+- COMMAND is one of: ready, move left, move right, move up, move down, move closer, move back, not visible
+- BBOX is the bounding box coordinates of the detected object (x1,y1 = top-left, x2,y2 = bottom-right)
+- Use normalized coordinates from 0.0 to 1.0 (0.0 = left/top edge, 1.0 = right/bottom edge)
+
+RESPONSE COMMANDS:
+- "ready" = object is in the center middle area (middle 40% of frame)
+- "move left" = object is on the RIGHT side of frame, needs to move toward LEFT
+- "move right" = object is on the LEFT side of frame, needs to move toward RIGHT  
+- "move up" = object is in BOTTOM portion, needs to move toward TOP
+- "move down" = object is in TOP portion, needs to move toward BOTTOM
+- "move closer" = object is too small/far away
+- "move back" = object is too large/close
+- "not visible" = cannot find the described object (use BBOX: [0,0,0,0])
+
+CRITICAL:
+- Always provide both COMMAND and BBOX
+- Be very careful about left/right directions
+- Only say "ready" if object is truly in the center middle area
+- Focus on getting the object into the center square of an imaginary 3x3 grid
+
+Example responses:
+COMMAND: move left
+BBOX: [0.7,0.3,0.9,0.6]
+
+COMMAND: ready
+BBOX: [0.4,0.4,0.6,0.6]`;
             const response = await fetch("https://gemini-server-for-vision.onrender.com/api/gemini-vision", {
                 method: "POST",
                 headers: {
@@ -152,8 +191,36 @@ Be practical. Cast a wide net. Reply with only the directions or say 'ready' if 
             });
             const result = await response.json();
             const text = result.text?.toLowerCase() || "";
-            setDetection(text);
-            return text;
+
+            // Parse the response to extract command and bounding box
+            let command = "";
+            let bbox = "";
+
+            const lines = text.split('\n');
+            for (const line of lines) {
+                if (line.includes('command:')) {
+                    command = line.split('command:')[1]?.trim() || "";
+                }
+                if (line.includes('bbox:')) {
+                    bbox = line.split('bbox:')[1]?.trim() || "";
+                }
+            }
+
+            // Display the detection info including bounding box
+            const displayText = command ? `${command}${bbox ? ` | BBox: ${bbox}` : ''}` : text;
+
+            // Track responses to prevent getting stuck
+            const newResponses = [...lastResponses, command || text].slice(-3); // Keep last 3 responses
+            setLastResponses(newResponses);
+
+            // If we've gotten the same response 3 times in a row, force "ready"
+            if (newResponses.length === 3 && newResponses.every(r => r === (command || text) && r !== "ready" && r !== "not visible")) {
+                setDetection("ready | Forced after repetition");
+                return "ready";
+            }
+
+            setDetection(displayText);
+            return command || text;
         }
         return "";
     };
