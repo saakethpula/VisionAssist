@@ -17,7 +17,7 @@ app.post('/api/gemini-vision', async (req, res) => {
         const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
         const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
         // Use prompt from frontend if provided, else fallback to default
-        const effectivePrompt = prompt || 'What do you see in the image? Only respond with a list of objects detected in the image in less than three words for each object, also include their positions and directions on how to get them to the center.';
+        const effectivePrompt = prompt;
         const image = {
             inlineData: {
                 data: imageBase64,
