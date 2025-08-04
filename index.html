@@ -3,13 +3,20 @@
 
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes" />
     <title>Vision Assist - Accessible Camera Tool for Low Vision Users</title>
     <meta name="description"
-        content="High contrast accessible camera tool designed for people with low vision. Voice-controlled object detection and framing assistance." />
+        content="High contrast accessible camera tool designed for people with low vision. Voice-controlled object detection and framing assistance. Responsive design for all devices." />
     <meta name="keywords"
-        content="accessibility, low vision, high contrast, camera, voice control, assistive technology" />
+        content="accessibility, low vision, high contrast, camera, voice control, assistive technology, responsive, mobile" />
     <meta name="theme-color" content="#000000" />
+
+    <!-- Mobile optimizations -->
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="Vision Assist" />
 
     <!-- Accessibility enhancements -->
     <style>
@@ -25,9 +32,17 @@
             background-color: #000000;
             min-height: 100vh;
         }
+
+        /* Responsive viewport handling */
+        @media screen and (max-width: 480px) {
+            html {
+                -webkit-text-size-adjust: 100%;
+                -ms-text-size-adjust: 100%;
+            }
+        }
     </style>
-  <script type="module" crossorigin src="/VisionAssist/assets/index-VYSzjbJ-.js"></script>
-  <link rel="stylesheet" crossorigin href="/VisionAssist/assets/index-DuQKb3we.css">
+  <script type="module" crossorigin src="/VisionAssist/assets/index-7SmFa4tp.js"></script>
+  <link rel="stylesheet" crossorigin href="/VisionAssist/assets/index-BdbLVS8q.css">
 </head>
 
 <body>
