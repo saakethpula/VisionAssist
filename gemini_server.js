@@ -15,7 +15,7 @@ app.post('/api/gemini-vision', async (req, res) => {
     if (!imageBase64) return res.status(400).json({ error: 'No image provided.' });
     try {
         const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
         const effectivePrompt = prompt;
         const image = {
             inlineData: {
